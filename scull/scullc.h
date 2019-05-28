@@ -42,4 +42,4 @@ int scullc_release(struct inode*,struct file *);
 ssize_t scullc_read(struct file *,char *,size_t,loff_t *);
 ssize_t scullc_write(struct file *,const char *,size_t,loff_t *);
 int scullc_trim(struct scullc_dev *);
-struct scullc_qset *scullc_follow(struct scullc_dev *dev,int n);
+struct dataset *scullc_follow(struct scullc_dev *dev,int n);

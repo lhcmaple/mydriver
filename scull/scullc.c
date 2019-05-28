@@ -41,8 +41,8 @@ struct dataset *scullc_follow(struct scullc_dev *dev,int n)
     printk(KERN_DEBUG"starting to follow\n");
     if(dev->data==NULL)
     {
-        dptr=kmalloc(sizeof(struct dataset),GFP_KERNEL);
-        memset(dptr,0,sizeof(struct dataset));
+        dev->data=kmalloc(sizeof(struct dataset),GFP_KERNEL);
+        memset(dev->data,0,sizeof(struct dataset));
     }
     struct dataset *dptr=dev->data;
     while(n--)
@@ -62,6 +62,7 @@ ssize_t scullc_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
 {
     printk(KERN_DEBUG"starting to read\n");
     struct scullc_dev *dev=filp->private_data;
+    struct dataset *dptr;
     int d_pos,i_pos;
     if(dev->size<=*f_pos)
     {
@@ -79,7 +80,7 @@ ssize_t scullc_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
         printk(KERN_WARNING"dptr is a nullptr\n");
         return -EFAULT;
     }
-    if(dptr->data==NULL)
+    if(dptr->item==NULL)
     {
         printk(KERN_WARNING"dptr->data is a nullptr\n");
         return -EFAULT;
@@ -88,7 +89,7 @@ ssize_t scullc_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
     {
         count=dev->itemsize-i_pos;//实际读的字节数
     }
-    raw_copy_to_user(buf,dev->data+i_pos,count);
+    raw_copy_to_user(buf,dptr->item+i_pos,count);
     *f_pos+=count;
     printk(KERN_DEBUG"success to read (size %ld,count %ld,f_pos %ld):\n",dev->size,count,*f_pos);
     return count;
@@ -107,12 +108,12 @@ ssize_t scullc_write(struct file *filp, const char *buf, size_t count,loff_t *f_
     {
         count=dev->itemsize-i_pos;//实际写的字节数
     }
-    if(dptr->data==NULL)
+    if(dptr->item==NULL)
     {
-        dptr->data=kmalloc(dev->itemsize,GFP_KERNEL);
-        memset(dptr->data,0,dev->itemsize);
+        dptr->item=kmalloc(dev->itemsize,GFP_KERNEL);
+        memset(dptr->item,0,dev->itemsize);
     }
-    raw_copy_from_user(dptr->data+i_pos,buf,count);
+    raw_copy_from_user(dptr->item+i_pos,buf,count);
     *f_pos+=count;
     dev->size=dev->size<*f_pos?*f_pos:dev->size;
     printk(KERN_DEBUG"success to write (size %ld,count %ld,f_pos %ld)\n",dev->size,count,*f_pos);
