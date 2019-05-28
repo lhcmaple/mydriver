@@ -3,7 +3,8 @@
 dev_t devno;
 struct scullc_dev scull_dev={
     .data=NULL,
-    .size=0
+    .size=0,
+    .itemsize=1000
 };
 
 struct file_operations my_fops={
@@ -17,28 +18,79 @@ struct file_operations my_fops={
 int scullc_trim(struct scullc_dev *dev)
 {
     printk(KERN_DEBUG"starting to trim\n");
-    kfree(dev->data);
-    dev->data=NULL;
-    dev->size=0;
+    if(dev==NULL)
+    {
+        printk(KERN_WARNING"dev is a nullptr!\n");
+        return -EINVAL;
+    }
+    struct dataset *dptr,*next;
+    dptr=dev->data;
+    while(dptr)
+    {
+        next=dptr->next;
+        kfree(dptr->item);//NULL指针不会进行释放
+        kfree(dptr);
+        dptr=next;
+    }
     printk(KERN_DEBUG"success to trim\n");
     return 0;
+}
+
+struct dataset *scullc_follow(struct scullc_dev *dev,int n)
+{
+    printk(KERN_DEBUG"starting to follow\n");
+    if(dev->data==NULL)
+    {
+        dptr=kmalloc(sizeof(struct dataset),GFP_KERNEL);
+        memset(dptr,0,sizeof(struct dataset));
+    }
+    struct dataset *dptr=dev->data;
+    while(n--)
+    {
+        if(dptr->next==NULL)
+        {
+            dptr->next=kmalloc(sizeof(struct dataset),GFP_KERNEL);
+            memset(dptr->next,0,sizeof(struct dataset));
+        }
+        dptr=dptr->next;
+    }
+    printk(KERN_DEBUG"success to follow\n");
+    return dptr;
 }
 
 ssize_t scullc_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
 {
     printk(KERN_DEBUG"starting to read\n");
     struct scullc_dev *dev=filp->private_data;
+    int d_pos,i_pos;
     if(dev->size<=*f_pos)
     {
         return 0;
     }
-    count=dev->size-*f_pos;
-    if(raw_copy_to_user(buf,dev->data+*f_pos,count))
+    if(dev->size<*f_pos+count)
     {
-        return 0;
+        count=dev->size-*f_pos;
     }
+    i_pos=*f_pos%(dev->itemsize);
+    d_pos=*f_pos/(dev->itemsize);
+    dptr=scullc_follow(dev,d_pos);
+    if(dptr==NULL)
+    {
+        printk(KERN_WARNING"dptr is a nullptr\n");
+        return -EFAULT;
+    }
+    if(dptr->data==NULL)
+    {
+        printk(KERN_WARNING"dptr->data is a nullptr\n");
+        return -EFAULT;
+    }
+    if(i_pos+count>dev->itemsize)
+    {
+        count=dev->itemsize-i_pos;//实际读的字节数
+    }
+    raw_copy_to_user(buf,dev->data+i_pos,count);
     *f_pos+=count;
-    printk(KERN_DEBUG"success to read (%d,%d,%d):\n",dev->size,count,*f_pos);
+    printk(KERN_DEBUG"success to read (size %ld,count %ld,f_pos %ld):\n",dev->size,count,*f_pos);
     return count;
 }
 
@@ -46,14 +98,24 @@ ssize_t scullc_write(struct file *filp, const char *buf, size_t count,loff_t *f_
 {
     printk(KERN_DEBUG"starting to write\n");
     struct scullc_dev *dev=filp->private_data;
-    if(dev->size<*f_pos)
+    struct dataset *dptr;
+    int d_pos,i_pos;
+    i_pos=*f_pos%(dev->itemsize);
+    d_pos=*f_pos/(dev->itemsize);
+    dptr=scullc_follow(dev,d_pos);
+    if(i_pos+count>dev->itemsize)
     {
-        return -EFAULT;
+        count=dev->itemsize-i_pos;//实际写的字节数
     }
-    raw_copy_from_user(dev->data+*f_pos,buf,count);
+    if(dptr->data==NULL)
+    {
+        dptr->data=kmalloc(dev->itemsize,GFP_KERNEL);
+        memset(dptr->data,0,dev->itemsize);
+    }
+    raw_copy_from_user(dptr->data+i_pos,buf,count);
     *f_pos+=count;
     dev->size=dev->size<*f_pos?*f_pos:dev->size;
-    printk(KERN_DEBUG"success to write (%d,%d,%d):\n",dev->size,count,*f_pos);
+    printk(KERN_DEBUG"success to write (size %ld,count %ld,f_pos %ld)\n",dev->size,count,*f_pos);
     return count;
 }
 
@@ -66,7 +128,7 @@ int scullc_open(struct inode *inode,struct file *filp)
     if((filp->f_flags&O_ACCMODE)==O_WRONLY)
     {
         scullc_trim(dev);
-        dev->data=kmalloc(1000,GFP_KERNEL);
+        dev->data=NULL;
         dev->size=0;
     }
     printk(KERN_DEBUG"success to open\n");
@@ -76,15 +138,14 @@ int scullc_open(struct inode *inode,struct file *filp)
 int scullc_release (struct inode *inode, struct file *filp)
 {
     printk(KERN_DEBUG"starting to release\n");
-    // scullc_trim((struct scullc_dev *)filp->private_data);
-    printk(KERN_DEBUG"start to release\n");
+    printk(KERN_DEBUG"success to release\n");
     return 0;
 }
 
 static int scullc_init(void)
 {
-    int result;
     printk(KERN_DEBUG"starting to init\n");
+    int result;
     result=alloc_chrdev_region(&devno,0,4,"scullc");
     if(result)
     {
@@ -101,8 +162,6 @@ static int scullc_init(void)
         printk(KERN_WARNING"failed to adding scull_dev\n");
         return result;
     }
-    scull_dev.data=kmalloc(1000,GFP_KERNEL);
-    scull_dev.size=0;
     printk(KERN_DEBUG"success to init\n");
     return 0;
 }
