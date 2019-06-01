@@ -7,6 +7,7 @@
 #include<linux/kernel.h>
 #include<asm/uaccess.h>
 #include<linux/errno.h>
+#include<linux/semaphore.h>
 
 MODULE_AUTHOR("lhc");
 MODULE_LICENSE("Dual BSD/GPL");
@@ -22,6 +23,8 @@ struct scullc_dev{
     int itemsize;
     struct cdev cdev;
 };
+
+struct semaphore lock1;
 
 // struct scullc_dev{
 //     struct scullc_qset *next;
@@ -43,3 +46,4 @@ ssize_t scullc_read(struct file *,char *,size_t,loff_t *);
 ssize_t scullc_write(struct file *,const char *,size_t,loff_t *);
 int scullc_trim(struct scullc_dev *);
 struct dataset *scullc_follow(struct scullc_dev *dev,int n);
+loff_t scullc_llseek(struct file *,loff_t,int);

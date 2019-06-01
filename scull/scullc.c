@@ -12,18 +12,19 @@ struct file_operations my_fops={
     .read=scullc_read,
     .write=scullc_write,
     .open=scullc_open,
-    .release=scullc_release
+    .release=scullc_release,
+    .llseek=scullc_llseek
 };
 
 int scullc_trim(struct scullc_dev *dev)
 {
+    struct dataset *dptr,*next;
     printk(KERN_DEBUG"starting to trim\n");
     if(dev==NULL)
     {
         printk(KERN_WARNING"dev is a nullptr!\n");
         return -EINVAL;
     }
-    struct dataset *dptr,*next;
     dptr=dev->data;
     while(dptr)
     {
@@ -38,13 +39,14 @@ int scullc_trim(struct scullc_dev *dev)
 
 struct dataset *scullc_follow(struct scullc_dev *dev,int n)
 {
+    struct dataset *dptr;
     printk(KERN_DEBUG"starting to follow\n");
     if(dev->data==NULL)
     {
         dev->data=kmalloc(sizeof(struct dataset),GFP_KERNEL);
         memset(dev->data,0,sizeof(struct dataset));
     }
-    struct dataset *dptr=dev->data;
+    dptr=dev->data;
     while(n--)
     {
         if(dptr->next==NULL)
@@ -60,10 +62,11 @@ struct dataset *scullc_follow(struct scullc_dev *dev,int n)
 
 ssize_t scullc_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
 {
-    printk(KERN_DEBUG"starting to read\n");
     struct scullc_dev *dev=filp->private_data;
     struct dataset *dptr;
     int d_pos,i_pos;
+    printk(KERN_DEBUG"starting to read\n");
+    down(&lock1);
     if(dev->size<=*f_pos)
     {
         return 0;
@@ -97,10 +100,10 @@ ssize_t scullc_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
 
 ssize_t scullc_write(struct file *filp, const char *buf, size_t count,loff_t *f_pos)
 {
-    printk(KERN_DEBUG"starting to write\n");
     struct scullc_dev *dev=filp->private_data;
     struct dataset *dptr;
     int d_pos,i_pos;
+    printk(KERN_DEBUG"starting to write\n");
     i_pos=*f_pos%(dev->itemsize);
     d_pos=*f_pos/(dev->itemsize);
     dptr=scullc_follow(dev,d_pos);
@@ -117,21 +120,67 @@ ssize_t scullc_write(struct file *filp, const char *buf, size_t count,loff_t *f_
     *f_pos+=count;
     dev->size=dev->size<*f_pos?*f_pos:dev->size;
     printk(KERN_DEBUG"success to write (size %ld,count %ld,f_pos %ld)\n",dev->size,count,*f_pos);
+    up(&lock1);
     return count;
+}
+
+loff_t scullc_llseek(struct file *filp,loff_t offset,int pos)
+{
+    struct scullc_dev *dev=filp->private_data;
+    loff_t retval=-EFAULT;
+    switch(pos)
+    {
+        case SEEK_SET:
+            if(offset<0)
+            {
+                printk(KERN_WARNING"llseek pos is wrong\n");
+            }
+            else
+            {
+                retval=offset;
+                filp->f_pos=retval;
+            }
+            break;
+        case SEEK_CUR:
+            if(filp->f_pos+offset<0)
+            {
+                printk(KERN_WARNING"llseek pos is wrong\n");
+            }
+            else
+            {
+                retval=filp->f_pos+offset;
+                filp->f_pos=retval;
+            }
+            break;
+        case SEEK_END:
+            if(dev->size+offset<0)
+            {
+                printk(KERN_WARNING"llseek pos is wrong\n");
+            }
+            else
+            {
+                retval=dev->size+offset;
+                filp->f_pos=retval;
+            }
+            break;
+        default:
+            printk(KERN_WARNING"llseek pos is wrong\n");
+    }
+    return retval;
 }
 
 int scullc_open(struct inode *inode,struct file *filp)
 {
-    printk(KERN_DEBUG"starting to open\n");
     struct scullc_dev *dev;
+    printk(KERN_DEBUG"starting to open\n");
     dev=container_of(inode->i_cdev,struct scullc_dev,cdev);
     filp->private_data=dev;
-    if((filp->f_flags&O_ACCMODE)==O_WRONLY)
-    {
-        scullc_trim(dev);
-        dev->data=NULL;
-        dev->size=0;
-    }
+    // if((filp->f_flags&O_ACCMODE)==O_WRONLY)
+    // {
+    //     scullc_trim(dev);
+    //     dev->data=NULL;
+    //     dev->size=0;
+    // }
     printk(KERN_DEBUG"success to open\n");
     return 0;
 }
@@ -145,8 +194,8 @@ int scullc_release (struct inode *inode, struct file *filp)
 
 static int scullc_init(void)
 {
-    printk(KERN_DEBUG"starting to init\n");
     int result;
+    printk(KERN_DEBUG"starting to init\n");
     result=alloc_chrdev_region(&devno,0,4,"scullc");
     if(result)
     {
@@ -163,6 +212,7 @@ static int scullc_init(void)
         printk(KERN_WARNING"failed to adding scull_dev\n");
         return result;
     }
+    sema_init(&lock1,0);
     printk(KERN_DEBUG"success to init\n");
     return 0;
 }
