@@ -1,9 +1,10 @@
 #!/bin/bash
->a.c
->b.c
-while read -e line
+>check.out
+while true
 do
-    echo "$line" >/dev/scullpipe0
-    echo "$line" >>a.c
-    cat /dev/scullpipe0 >>b.c
-done <scullpipe.c
+    if isavail /dev/scullpipe0 r
+    then
+        get /dev/scullpipe0 10 0 0 >>check.out
+    fi
+    sleep 1
+done

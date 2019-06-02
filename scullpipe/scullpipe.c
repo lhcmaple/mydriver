@@ -5,14 +5,15 @@ struct scullpipe_dev scull_dev={
     .data=NULL,
     .rpos=0,
     .wpos=0,
-    .avail=99,
-    .size=100,
+    .size=100
 };
 
 struct file_operations my_fops={
     .owner=THIS_MODULE,
     .read=scullpipe_read,
     .write=scullpipe_write,
+    .poll=scullpipe_poll,
+    
     .open=scullpipe_open,
     .release=scullpipe_release
 };
@@ -21,19 +22,25 @@ ssize_t scullpipe_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
 {
     struct scullpipe_dev *dev=filp->private_data;
     int retval;
-    printk(KERN_DEBUG"starting to read%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,dev->avail);
-    // wait_event_interruptible(my_queue,cond!=0);
-    // cond=0;
-    // spin_lock(&rlock);
-    if(dev->size-dev->avail-1==0)
+    if(down_interruptible(&rsem))
+        return -ERESTARTSYS;
+    while(dev->size-AVAIL-1==0)
     {
-        // spin_unlock(&rlock);
-        return 0;
+        up(&rsem);
+        DEFINE_WAIT(wait);
+        prepare_to_wait(&inq,&wait,TASK_INTERRUPTIBLE);
+        if(dev->size-AVAIL-1==0)
+            schedule();
+        finish_wait(&inq,&wait);
+        if(signal_pending(current))
+            return -ERESTARTSYS;
+        if(down_interruptible(&rsem))
+            return -ERESTARTSYS;
     }
-    if(count>dev->size-dev->avail-1)
-        count=dev->size-dev->avail-1;
+    printk(KERN_DEBUG"starting to read%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,AVAIL);
+    if(count>dev->size-AVAIL-1)
+        count=dev->size-AVAIL-1;
     retval=count;
-    dev->avail+=count;
     if(dev->rpos<dev->wpos)
     {
         raw_copy_to_user(buf,dev->data+dev->rpos,count);
@@ -59,9 +66,10 @@ ssize_t scullpipe_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
             dev->rpos+=count;
         }
     }
-    // spin_unlock(&rlock);
     printk(KERN_DEBUG"%s\n",dev->data);
-    printk(KERN_DEBUG"success to read%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,dev->avail);
+    printk(KERN_DEBUG"success to read%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,AVAIL);
+    up(&rsem);
+    wake_up_interruptible(&outq);
     return retval;
 }
 
@@ -69,19 +77,25 @@ ssize_t scullpipe_write(struct file *filp, const char *buf, size_t count,loff_t 
 {
     struct scullpipe_dev *dev=filp->private_data;
     int retval;
-    printk(KERN_DEBUG"starting to write%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,dev->avail);
-    // cond=1;
-    // wake_up_interruptible(&my_queue);
-    // spin_lock(&wlock);
-    if(dev->avail==0)
+    if(down_interruptible(&wsem))
+        return -ERESTARTSYS;
+    while(AVAIL==0)
     {
-        // spin_unlock(&wlock);
-        return 0;
+        up(&wsem);
+        DEFINE_WAIT(wait);
+        prepare_to_wait(&outq,&wait,TASK_INTERRUPTIBLE);
+        if(AVAIL==0)
+            schedule();
+        finish_wait(&outq,&wait);
+        if(signal_pending(current))
+            return -ERESTARTSYS;
+        if(down_interruptible(&wsem))
+            return -ERESTARTSYS;
     }
-    if(dev->avail<count)
-        count=dev->avail;
+    printk(KERN_DEBUG"starting to write%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,AVAIL);
+    if(AVAIL<count)
+        count=AVAIL;
     retval=count;
-    dev->avail-=count;
     if(dev->wpos>=dev->rpos)
     {
         if(dev->size-dev->wpos<=count)
@@ -107,10 +121,28 @@ ssize_t scullpipe_write(struct file *filp, const char *buf, size_t count,loff_t 
         raw_copy_from_user(dev->data+dev->wpos,buf,count);
         dev->wpos+=count;
     }
-    // spin_unlock(&wlock);
     printk(KERN_DEBUG"%s\n",dev->data);
-    printk(KERN_DEBUG"success to write%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,dev->avail);
+    printk(KERN_DEBUG"success to write%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,AVAIL);
+    up(&wsem);
+    wake_up_interruptible(&inq);
     return retval;
+}
+
+unsigned int scullpipe_poll(struct file *filp,poll_table *wait)
+{
+    struct scullpipe_dev *dev=filp->private_data;
+    unsigned int mask=0;
+    down_interruptible(&rsem);
+    down_interruptible(&wsem);
+    poll_wait(filp,&inq,wait);
+    poll_wait(filp,&outq,wait);
+    if(dev->rpos!=dev->wpos)
+        mask|=POLLIN|POLLRDNORM;
+    if(AVAIL!=0)
+        mask|=POLLOUT|POLLWRNORM;
+    up(&wsem);
+    up(&rsem);
+    return mask;
 }
 
 int scullpipe_open(struct inode *inode,struct file *filp)
@@ -155,7 +187,10 @@ static int __init scullpipe_init(void)
     for(i=0;i<100;++i)
         scull_dev.data[i]='0';
     scull_dev.data[100]=0;
-    // init_waitqueue_head(&my_queue);
+    init_waitqueue_head(&inq);
+    init_waitqueue_head(&outq);
+    sema_init(&rsem,1);
+    sema_init(&wsem,1);
     printk(KERN_DEBUG"success to init\n");
     return 0;
 }
