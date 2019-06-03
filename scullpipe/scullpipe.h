@@ -26,14 +26,37 @@ struct scullpipe_dev{
     struct cdev cdev;
 };
 
+int scullpipe_open(struct inode *,struct file *);
+int scullpipe_release(struct inode*,struct file *);
+ssize_t scullpipe_read(struct file *,char *,size_t,loff_t *);
+ssize_t scullpipe_write(struct file *,const char *,size_t,loff_t *);
+unsigned int scullpipe_poll(struct file *,poll_table *);
+
+kuid_t uid;
+int ucount=0;
+// atomic_t avail=ATOMIC_INIT(1);
+spinlock_t ulock;
 struct semaphore rsem;
 struct semaphore wsem;
 
 wait_queue_head_t inq;
 wait_queue_head_t outq;
 
-int scullpipe_open(struct inode *,struct file *);
-int scullpipe_release(struct inode*,struct file *);
-ssize_t scullpipe_read(struct file *,char *,size_t,loff_t *);
-ssize_t scullpipe_write(struct file *,const char *,size_t,loff_t *);
-unsigned int scullpipe_poll(struct file *,poll_table *);
+dev_t devno;
+
+struct scullpipe_dev scull_dev={
+    .data=NULL,
+    .rpos=0,
+    .wpos=0,
+    .size=100
+};
+
+struct file_operations my_fops={
+    .owner=THIS_MODULE,
+    .read=scullpipe_read,
+    .write=scullpipe_write,
+    .poll=scullpipe_poll,
+    
+    .open=scullpipe_open,
+    .release=scullpipe_release
+};

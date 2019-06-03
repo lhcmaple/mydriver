@@ -8,3 +8,4 @@
 *.o
 *.mod.*
 */.tmp_versions/*
+*.o.*

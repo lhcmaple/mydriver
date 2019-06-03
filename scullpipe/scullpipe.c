@@ -1,23 +1,5 @@
 #include"scullpipe.h"
 
-dev_t devno;
-struct scullpipe_dev scull_dev={
-    .data=NULL,
-    .rpos=0,
-    .wpos=0,
-    .size=100
-};
-
-struct file_operations my_fops={
-    .owner=THIS_MODULE,
-    .read=scullpipe_read,
-    .write=scullpipe_write,
-    .poll=scullpipe_poll,
-    
-    .open=scullpipe_open,
-    .release=scullpipe_release
-};
-
 ssize_t scullpipe_read(struct file *filp,char *buf,size_t count,loff_t *f_pos)
 {
     struct scullpipe_dev *dev=filp->private_data;
@@ -149,6 +131,28 @@ int scullpipe_open(struct inode *inode,struct file *filp)
 {
     struct scullpipe_dev *dev;
     printk(KERN_DEBUG"starting to open\n");
+    // if(!atomic_dec_and_test(&avail))
+    // {
+    //     atomic_inc(&avail);
+    //     printk(KERN_DEBUG"failed to open\n");
+    //     return -EBUSY;
+    // }
+    spin_lock(&ulock);
+    if(ucount)
+    {
+        if(uid.val!=current->cred->euid.val&&uid.val!=current->cred->uid.val&&!capable(CAP_DAC_OVERRIDE))
+        {
+            printk(KERN_DEBUG"failed to open\n");
+            spin_unlock(&ulock);
+            return -EBUSY;
+        }
+    }
+    else
+    {
+        uid=current->cred->euid;
+    }
+    ucount++;
+    spin_unlock(&ulock);
     dev=container_of(inode->i_cdev,struct scullpipe_dev,cdev);
     filp->private_data=dev;
     printk(KERN_DEBUG"success to open\n");
@@ -158,6 +162,10 @@ int scullpipe_open(struct inode *inode,struct file *filp)
 int scullpipe_release (struct inode *inode, struct file *filp)
 {
     printk(KERN_DEBUG"starting to release\n");
+    spin_lock(&ulock);
+    ucount--;
+    spin_unlock(&ulock);
+    // atomic_inc(&avail);
     printk(KERN_DEBUG"success to release\n");
     return 0;
 }
@@ -189,6 +197,7 @@ static int __init scullpipe_init(void)
     scull_dev.data[100]=0;
     init_waitqueue_head(&inq);
     init_waitqueue_head(&outq);
+    spin_lock_init(&ulock);
     sema_init(&rsem,1);
     sema_init(&wsem,1);
     printk(KERN_DEBUG"success to init\n");
