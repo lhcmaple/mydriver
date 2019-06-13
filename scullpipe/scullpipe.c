@@ -59,6 +59,10 @@ ssize_t scullpipe_write(struct file *filp, const char *buf, size_t count,loff_t 
 {
     struct scullpipe_dev *dev=filp->private_data;
     int retval;
+    unsigned long end_time;
+    unsigned long start_time=jiffies;
+    unsigned long wait_time=jiffies+5*HZ;
+    wait_event_interruptible_timeout(outq,0,5*HZ);
     if(down_interruptible(&wsem))
         return -ERESTARTSYS;
     while(AVAIL==0)
@@ -107,6 +111,8 @@ ssize_t scullpipe_write(struct file *filp, const char *buf, size_t count,loff_t 
     printk(KERN_DEBUG"success to write%d,%d,%d,%d\n",current->pid,dev->rpos,dev->wpos,AVAIL);
     up(&wsem);
     wake_up_interruptible(&inq);
+    end_time=jiffies;
+    printk(KERN_DEBUG"time cost is %ds\n",(end_time-start_time)/HZ);
     return retval;
 }
 
